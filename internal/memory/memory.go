@@ -8,8 +8,9 @@ import (
 )
 
 type Memory struct {
-	sync.Mutex
-	Tasks []models.Task
+	sync.RWMutex
+	unicID int64
+	Tasks  []models.Task
 }
 
 func New() *Memory {
@@ -19,22 +20,18 @@ func New() *Memory {
 
 func (m *Memory) Create(task models.Task) (models.Task, error) {
 	//генерируем уникальный ID
-	//проблема с индексами, при удалении элементы слайса перемещаются
-	//и последний в слайсе элемент может не быть с наибльшим id
-	if len(m.Tasks) > 0 {
-		task.ID = m.Tasks[len(m.Tasks)-1].ID + 1
-	} else {
-		task.ID = 1
-	}
-	task.CreatedAt = (time.Now().Format(time.RFC3339))
-
 	m.Lock()
+	defer m.Unlock()
+	m.unicID++
+	task.ID = m.unicID
+	task.CreatedAt = (time.Now().Format(time.RFC3339))
 	m.Tasks = append(m.Tasks, task)
-	m.Unlock()
 	return task, nil
 }
 
-func (m *Memory) Get(id int) (models.Task, bool) {
+func (m *Memory) Get(id int64) (models.Task, bool) {
+	m.RLock()
+	defer m.RUnlock()
 	for _, task := range m.Tasks {
 		if task.ID == id { //если нашли - возвращаем задачу
 			return task, true
@@ -44,35 +41,36 @@ func (m *Memory) Get(id int) (models.Task, bool) {
 }
 
 func (m *Memory) List() []models.Task {
-	return m.Tasks
+	var tasksCopy []models.Task
+	m.RLock()
+	defer m.RUnlock()
+	return append(tasksCopy, m.Tasks...)
 }
 
-func (m *Memory) Update(id int, tasks models.Task) (models.Task, error) {
-	for index, task := range m.Tasks {
-		if task.ID == id { //если нашли - возвращаем задачу
-			if tasks.Title != "" {
-				m.Lock()
-				m.Tasks[index].Title = tasks.Title
-				m.Unlock()
+func (m *Memory) Update(id int64, task models.Task) (models.Task, error) {
+	m.Lock()
+	defer m.Unlock()
+	for index, tmp_task := range m.Tasks {
+		if tmp_task.ID == id { //если нашли - возвращаем задачу
+			if task.Title != "" {
+				m.Tasks[index].Title = task.Title
 			}
-			m.Lock()
-			m.Tasks[index].Done = tasks.Done
-			m.Unlock()
-			return task, nil
+			m.Tasks[index].Done = task.Done
+			return m.Tasks[index], nil
 		}
 	}
-	return models.Task{}, fmt.Errorf("Задача c id - %d не найдена", id)
+	return models.Task{}, fmt.Errorf("Wrong id")
 }
 
-func (m *Memory) Delete(id int) error {
+func (m *Memory) Delete(id int64) error {
+	m.Lock()
+	defer m.Unlock()
 	for index, task := range m.Tasks {
 		if task.ID == id { //если нашли
-			m.Lock()
 			m.Tasks[index] = m.Tasks[len(m.Tasks)-1] //удаляем задачу из слайса
 			m.Tasks = m.Tasks[:len(m.Tasks)-1]
-			m.Unlock()
 			return nil
 		}
 	}
-	return fmt.Errorf("Задача c id - %d не найдена", id)
+	return fmt.Errorf("Wrong id")
 }
